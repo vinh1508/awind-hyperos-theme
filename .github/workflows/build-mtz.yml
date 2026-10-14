@@ -3,7 +3,7 @@ name: Build MTZ (Redmi K80 Pro POC)
 on:
   push:
     branches:
-      - '**'
+      - 'main'
     tags:
       - 'v*'
   pull_request:
