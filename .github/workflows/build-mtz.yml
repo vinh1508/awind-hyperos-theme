@@ -1,0 +1,144 @@
+name: Build MTZ (Redmi K80 Pro POC)
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ui_version:
+        description: 'uiVersion (POC, mac dinh 17)'
+        required: true
+        type: string
+        default: '17'
+      adapter_version:
+        description: 'miuiAdapterVersion (POC, mac dinh 5.0)'
+        required: true
+        type: string
+        default: '5.0'
+      only_apk_confirmed:
+        description: 'Chi dong goi chuoi da xac minh ID bang APK (can CSV co status=apk_confirmed)'
+        required: true
+        type: boolean
+        default: false
+
+# The build works without secrets or elevated access.
+permissions:
+  contents: read
+
+concurrency:
+  group: mtz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  THEME_PATH: dist/ViHoa-K80Pro-POC-v0.1.mtz
+
+jobs:
+  build:
+    name: Test, build and upload MTZ
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      UI_VERSION: ${{ inputs.ui_version || '17' }}
+      ADAPTER_VERSION: ${{ inputs.adapter_version || '5.0' }}
+      ONLY_APK_CONFIRMED: ${{ inputs.only_apk_confirmed && 'true' || 'false' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build MTZ
+        shell: bash
+        run: |
+          set -euo pipefail
+          options=()
+          if [[ "$ONLY_APK_CONFIRMED" == 'true' ]]; then
+            options+=(--only-apk-confirmed)
+          fi
+          python tools/mtz_tool.py build \
+            --csv translations.csv \
+            --out "$THEME_PATH" \
+            --ui-version "$UI_VERSION" \
+            --adapter-version "$ADAPTER_VERSION" \
+            "${options[@]}"
+
+      - name: Validate output and calculate SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/mtz_tool.py inspect "$THEME_PATH"
+          test -s "$THEME_PATH"
+          sha256sum "$THEME_PATH" > "$THEME_PATH.sha256"
+          {
+            echo '### Redmi K80 Pro MTZ — build result'
+            echo ''
+            echo 'ZIP/XML validated. This does **not** prove that HyperOS can import the theme or override Settings strings.'
+            echo ''
+            echo '**SHA-256:**'
+            echo '```text'
+            cat "$THEME_PATH.sha256"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # upload-artifact v7 archive:false keeps the output as a directly downloadable .mtz.
+      - name: Upload MTZ artifact (no extra ZIP wrapper)
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: ViHoa-K80Pro-POC-v0.1.mtz
+          path: ${{ env.THEME_PATH }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Add artifact link to job summary
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: echo "[Download MTZ from this run]($ARTIFACT_URL)" >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Publish prerelease for v* tag
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download MTZ from build job
+        uses: actions/download-artifact@v8
+        with:
+          name: ViHoa-K80Pro-POC-v0.1.mtz
+          path: dist/
+
+      - name: Publish GitHub prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test -s "$THEME_PATH"
+          sha256sum "$THEME_PATH" > "$THEME_PATH.sha256"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "$THEME_PATH" "$THEME_PATH.sha256" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "$THEME_PATH" "$THEME_PATH.sha256" \
+              --title "ViHoa Redmi K80 Pro POC $GITHUB_REF_NAME" \
+              --notes 'Experimental MTZ POC. ZIP/XML validation only; import and localization on a real device are unverified.' \
+              --prerelease
+          fi
