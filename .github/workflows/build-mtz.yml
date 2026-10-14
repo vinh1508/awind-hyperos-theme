@@ -3,29 +3,28 @@ name: Build MTZ (Redmi K80 Pro POC)
 on:
   push:
     branches:
-      - 'main'
+      - '**'
     tags:
       - 'v*'
   pull_request:
   workflow_dispatch:
     inputs:
       ui_version:
-        description: 'uiVersion (POC, mac dinh 17)'
+        description: 'uiVersion (thu nghiem, mac dinh 17)'
         required: true
         type: string
         default: '17'
       adapter_version:
-        description: 'miuiAdapterVersion (POC, mac dinh 5.0)'
+        description: 'miuiAdapterVersion (thu nghiem, mac dinh 5.0)'
         required: true
         type: string
         default: '5.0'
       only_apk_confirmed:
-        description: 'Chi dong goi chuoi da xac minh ID bang APK (can CSV co status=apk_confirmed)'
+        description: 'Chi build nhung chuoi da xac minh ID tu APK'
         required: true
         type: boolean
         default: false
 
-# The build works without secrets or elevated access.
 permissions:
   contents: read
 
@@ -33,14 +32,14 @@ concurrency:
   group: mtz-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  THEME_PATH: dist/ViHoa-K80Pro-POC-v0.1.mtz
-
 jobs:
   build:
     name: Test, build and upload MTZ
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      filename: ${{ steps.version.outputs.filename }}
+      theme_version: ${{ steps.version.outputs.version }}
     env:
       UI_VERSION: ${{ inputs.ui_version || '17' }}
       ADAPTER_VERSION: ${{ inputs.adapter_version || '5.0' }}
@@ -59,6 +58,10 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
+      - name: Compute version and filename from GitHub run or tag
+        id: version
+        run: python tools/ci_version.py
+
       - name: Build MTZ
         shell: bash
         run: |
@@ -70,6 +73,7 @@ jobs:
           python tools/mtz_tool.py build \
             --csv translations.csv \
             --out "$THEME_PATH" \
+            --theme-version "$THEME_VERSION" \
             --ui-version "$UI_VERSION" \
             --adapter-version "$ADAPTER_VERSION" \
             "${options[@]}"
@@ -82,9 +86,12 @@ jobs:
           test -s "$THEME_PATH"
           sha256sum "$THEME_PATH" > "$THEME_PATH.sha256"
           {
-            echo '### Redmi K80 Pro MTZ — build result'
+            echo '### Redmi K80 Pro POC — build result'
             echo ''
-            echo 'ZIP/XML validated. This does **not** prove that HyperOS can import the theme or override Settings strings.'
+            echo "**Metadata version:** $THEME_VERSION"
+            echo "**MTZ filename:** $(basename "$THEME_PATH")"
+            echo ''
+            echo 'ZIP/XML valid. This does **not** confirm actual theme import or localization on the phone.'
             echo ''
             echo '**SHA-256:**'
             echo '```text'
@@ -92,13 +99,12 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # upload-artifact v7 archive:false keeps the output as a directly downloadable .mtz.
-      - name: Upload MTZ artifact (no extra ZIP wrapper)
+      # archive:false uploads the .mtz directly, using its actual basename as artifact name.
+      - name: Upload MTZ directly (without extra ZIP)
         id: upload
         uses: actions/upload-artifact@v7
         with:
-          name: ViHoa-K80Pro-POC-v0.1.mtz
-          path: ${{ env.THEME_PATH }}
+          path: ${{ steps.version.outputs.path }}
           archive: false
           if-no-files-found: error
           retention-days: 30
@@ -109,7 +115,7 @@ jobs:
         run: echo "[Download MTZ from this run]($ARTIFACT_URL)" >> "$GITHUB_STEP_SUMMARY"
 
   release:
-    name: Publish prerelease for v* tag
+    name: Publish prerelease from semantic version tag
     needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -117,10 +123,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download MTZ from build job
+      - name: Download dynamically named MTZ
         uses: actions/download-artifact@v8
         with:
-          name: ViHoa-K80Pro-POC-v0.1.mtz
+          name: ${{ needs.build.outputs.filename }}
           path: dist/
 
       - name: Publish GitHub prerelease
@@ -128,16 +134,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          THEME_FILE: ${{ needs.build.outputs.filename }}
         run: |
           set -euo pipefail
-          test -s "$THEME_PATH"
-          sha256sum "$THEME_PATH" > "$THEME_PATH.sha256"
+          theme_path="dist/$THEME_FILE"
+          test -s "$theme_path"
+          sha256sum "$theme_path" > "$theme_path.sha256"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" \
-              "$THEME_PATH" "$THEME_PATH.sha256" --clobber
+              "$theme_path" "$theme_path.sha256" --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
-              "$THEME_PATH" "$THEME_PATH.sha256" \
+              "$theme_path" "$theme_path.sha256" \
               --title "ViHoa Redmi K80 Pro POC $GITHUB_REF_NAME" \
               --notes 'Experimental MTZ POC. ZIP/XML validation only; import and localization on a real device are unverified.' \
               --prerelease
