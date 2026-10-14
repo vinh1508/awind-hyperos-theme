@@ -1,0 +1,8 @@
+ma_test,muc_tieu,ket_qua,ghi_chu
+T01,ADB đọc được codename miro,CHUA_TEST,
+T02,Theme Manager chấp nhận import MTZ,CHUA_TEST,
+T03,Chỉ áp dụng phần system/theme được nếu có,CHUA_TEST,
+T04,Tiêu đề Settings chuyển sang Cài đặt,CHUA_TEST,
+T05,Icon label Settings chuyển sang Cài đặt,CHUA_TEST,
+T06,Khởi động lại vẫn giữ chữ Việt,CHUA_TEST,
+T07,Đổi về theme mặc định thành công,CHUA_TEST,

@@ -1,0 +1,3 @@
+package,name,zh_CN,vi_VN,status
+com.android.settings,settings_label,设置,Cài đặt,candidate
+com.android.settings,settings_label_launcher,设置,Cài đặt,candidate
