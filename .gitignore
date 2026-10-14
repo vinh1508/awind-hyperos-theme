@@ -1,0 +1,5 @@
+reports/device_info.json
+*.apk
+*_decoded/
+__pycache__/
+*.pyc
